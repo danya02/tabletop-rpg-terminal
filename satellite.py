@@ -3,8 +3,6 @@ import pygame
 import threading
 import socket
 
-global s
-
 
 class SatelliteDisplay:
 
@@ -15,8 +13,13 @@ class SatelliteDisplay:
         self.addr = False
         self.connected = False
         self.thread = False
+        self.display = pygame.Surface((1, 1))
         self.init_socket()
         self.start_recv_loop()
+
+    def init_screen(self):
+        pygame.init()
+        self.display = pygame.display.set_mode((320, 240))
 
     def init_socket(self):
         self.s = socket.socket()
@@ -34,8 +37,33 @@ class SatelliteDisplay:
         self.loop = True
         self.thread.start()
 
+    def write_packet(self, packet: bytes):
+        self.conn.writeall(packet)
+
+    def ack(self, id: int):
+        self.write_packet(bytes(str(id), 'utf8') + b':ACK')
+
+    def nak(self, id: int):
+        self.write_packet(bytes(str(id), 'utf8') + b':NAK')
+
     def parse_packet(self, packet: bytes):
-        pass
+        data = None
+        try:
+            id, command, data = packet.split(b':', 2)
+        except ValueError:
+            id, command = packet.split(b':')
+        id = int(id)
+        try:
+            if command == b'fullscreen':
+                pygame.display.toggle_fullscreen()
+            elif command == b'resize':
+                x, y = data.split(b'x')
+                x = int(x)
+                y = int(y)
+                self.display = pygame.display.set_mode((x, y))
+            self.ack(id)
+        except:
+            self.nak(id)
 
     def recv_packets(self):
         while self.loop:
