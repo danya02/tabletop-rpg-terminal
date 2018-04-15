@@ -1,6 +1,8 @@
 #!/usr/bin/python3
 import gzip
-
+import math
+import random
+import time
 import pygame
 import threading
 import socket
@@ -23,10 +25,13 @@ class SatelliteDisplay:
         self.display = pygame.Surface((1, 1))
         self.surface = pygame.Surface((1, 1))
         self.clock = pygame.time.Clock()
+        self.recv_clock = pygame.time.Clock()
         self.framerate = 30
+        self.port = 1237
         self.init_socket()
+        self.init_screen()
         self.start_recv_loop()
-        self.start_draw_loop()
+        self.wait_for_connection()
 
     def init_screen(self):
         pygame.init()
@@ -34,16 +39,76 @@ class SatelliteDisplay:
 
     def init_socket(self):
         self.socket = socket.socket()
-        self.socket.bind(('', 1234))
+        try:
+            self.socket.bind(('', self.port))
+        except socket.error:
+            self.port = random.randint(1024,65535)
+            self.init_socket()
         self.socket.listen(1)
-        self.conn, self.addr = self.socket.accept()
-        self.conn.settimeout(5)
 
-    def update_display(self):
-        while self.draw_loop:
-            while self.update_now:
-                self.display.blit(self.surface, (0, 0))
-            self.clock.tick(self.framerate)
+    @staticmethod
+    def get_my_ips():  # taken from https://stackoverflow.com/a/1267524/5936187
+        return [ip for ip in socket.gethostbyname_ex(socket.gethostname())[2] if not ip.startswith("127.")] or [
+            [(s.connect(("8.8.8.8", 53)), s.getsockname()[0], s.close()) for s in
+             [socket.socket(socket.AF_INET, socket.SOCK_DGRAM)]][0][1]]
+
+    def wait_for_connection(self):
+        self.display = pygame.display.set_mode((320, 240))
+        self.surface = pygame.Surface((320,240))
+
+        def draw_plug(center: (int, int), width: int, height: int, pin_len: int, cable_len: int):
+            c = pygame.Color('white')
+            r = pygame.Rect(0, 0, width, height)
+            r.center = center
+            pygame.draw.line(self.surface, c, r.center, (r.centerx - r.w // 2 - cable_len, r.centery),10)
+            y1 = r.centery + r.h // 4
+            y2 = r.centery - r.h // 4
+            pygame.draw.line(self.surface, c, (r.centerx, y1), (r.centerx + r.w // 2 + pin_len, y1),5)
+            pygame.draw.line(self.surface, c, (r.centerx, y2), (r.centerx + r.w // 2 + pin_len, y2),5)
+            self.surface.fill(c, r)
+
+        def draw_socket(center: (int, int), width: int, height: int, cable_len: int):
+            c = pygame.Color('white')
+            r = pygame.Rect(0, 0, width, height)
+            r.center = center
+            pygame.draw.line(self.surface, c, r.center, (r.centerx + r.w // 2 + cable_len, r.centery),10)
+            self.surface.fill(c, r)
+        x1=100
+        x2=240
+        f = pygame.font.SysFont('BuiltIn',32)
+        t_waiting = f.render('Waiting for connection...',True,pygame.Color('white'))
+        t_ips = f.render('; '.join(['{}:{}'.format(i,self.port) for i in self.get_my_ips()]),True,pygame.Color('white'))
+
+        while not self.connected:
+            self.surface.fill(pygame.Color('black'))
+            x1=int(100+math.sin(time.time())*32)
+            x2 = int(240 - math.sin(time.time()) * 32)
+            draw_plug((x1,120),50,100,25,50)
+            draw_socket((x2,120),50,100,50)
+            self.surface.blit(t_waiting,(0,0))
+            self.surface.blit(t_ips,(0,200))
+            self.socket.settimeout(0.01)
+            try:
+                self.conn, self.addr = self.socket.accept()
+                self.conn.settimeout(0.001)
+                self.connected = True
+            except socket.timeout:
+                pass
+            self.flip()
+        t_connected = f.render('Connected!',True,pygame.Color('white'))
+        t_conn_ip = f.render(str(self.conn.getpeername()),True,pygame.Color('white'))
+        self.surface.fill(pygame.Color('black'))
+        draw_plug((138, 120), 50, 100, 25, 50)
+        draw_socket((192, 120), 50, 100, 50)
+        self.surface.blit(t_connected, (0, 0))
+        self.surface.blit(t_conn_ip, (0, 200))
+        self.flip()
+
+    def flip(self):
+        if self.update_now:
+            self.display.blit(self.surface, (0, 0))
+            pygame.display.flip()
+        self.clock.tick(self.framerate)
 
     def get_events(self):
         while self.event_loop:
@@ -55,19 +120,11 @@ class SatelliteDisplay:
         self.recv_loop = False
         self.recv_thread = threading.Thread()
         self.recv_thread.name = 'socket parser loop'
-        self.recv_thread.daemon = True
+        self.recv_thread.daemon = False
         self.recv_thread.run = self.recv_packets
         self.recv_loop = True
         self.recv_thread.start()
 
-    def start_draw_loop(self):
-        self.draw_loop = False
-        self.draw_thread = threading.Thread()
-        self.draw_thread.name = 'display updater loop'
-        self.draw_thread.daemon = True
-        self.draw_thread.run = self.update_display
-        self.draw_loop = True
-        self.draw_thread.start()
 
     def start_event_loop(self):
         self.event_loop = False
@@ -79,7 +136,7 @@ class SatelliteDisplay:
         self.event_thread.start()
 
     def write_packet(self, packet: bytes):
-        self.conn.writeall(packet)
+        self.conn.sendall(packet)
 
     def ack(self, id: int):
         self.write_packet(bytes(str(id), 'utf8') + b':ACK')
@@ -95,7 +152,10 @@ class SatelliteDisplay:
         try:
             id, command, data = packet.split(b':', 2)
         except ValueError:
-            id, command = packet.split(b':')
+            try:
+                id, command = packet.split(b':')
+            except ValueError:
+                return None
         id = int(id)
         try:
             if command == b'fullscreen':
@@ -120,6 +180,10 @@ class SatelliteDisplay:
                 else:
                     raise ValueError('compression method `{}` not supported'.format(compression))
                 self.surface = pygame.image.fromstring(imagestr, (x, y), encoding)
+            elif command == b'ping':
+                pass
+            else:
+                raise ValueError('command {} not supported'.format(command))
             self.ack(id)
         except:
             self.nak(id)
@@ -127,6 +191,7 @@ class SatelliteDisplay:
     def recv_packets(self):
         while self.recv_loop:
             while self.connected:
+                self.recv_clock.tick(self.framerate)
                 data = b''
                 newdata = None
                 while not newdata == b'':
@@ -135,4 +200,8 @@ class SatelliteDisplay:
                     except socket.timeout:
                         newdata = b''
                     data += newdata
+                data = data.strip()
                 self.parse_packet(data)
+
+if __name__ == '__main__':
+    s = SatelliteDisplay()
