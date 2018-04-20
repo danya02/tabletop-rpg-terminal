@@ -4,8 +4,8 @@ import time
 
 
 class Widget:
-    def __init__(self, x: int, y: int):
-        self.rect = pygame.Rect(x, y, 1, 1)
+    def __init__(self, rect: pygame.Rect):
+        self.rect = pygame.Rect(rect)
 
     def draw(self, target: pygame.Surface):
         target.fill(pygame.Color('white'), self.rect)
@@ -18,9 +18,10 @@ class Widget:
 
 
 class Button(Widget):
-    def __init__(self, x: int, y: int):
-        super().__init__(x, y)
+    def __init__(self, rect: pygame.Rect, target: callable):
+        super().__init__(rect)
         self.border_thickness = 2
+        self.action = target
 
     def draw(self, target: pygame.Surface):
         pygame.draw.rect(target, pygame.Color('white' if not self.moused() else 'red'), self.rect,
@@ -28,7 +29,7 @@ class Button(Widget):
 
     def inform(self, e: pygame.event.EventType):
         super().inform(e)
-        if e.type == pygame.MOUSEBUTTONDOWN:
+        if e.type == pygame.MOUSEBUTTONDOWN and self.moused():
             self.action()
 
     def action(self):
@@ -36,9 +37,9 @@ class Button(Widget):
 
 
 class TextBox(Widget):
-    def __init__(self, x: int, y: int):
-        super().__init__(x, y)
-        self.font = pygame.font.SysFont('BuiltIn', 32)
+    def __init__(self, rect: pygame.Rect):
+        super().__init__(rect)
+        self.font = pygame.font.SysFont('BuiltIn', self.rect.height)
         self.color = pygame.Color('white')
         self.text = ''
         self.text_surface = pygame.Surface((0, 0))
@@ -56,6 +57,7 @@ class TextBox(Widget):
         pygame.draw.rect(target, self.color, self.rect, self.border_thickness)
         if self.moused() and int(time.time() * 2) % 2 == 0:
             x_pos = self.font.size(self.text[:self.cursor])[0]
+            x_pos += self.rect.x
             if self.cursor > 0:
                 x_pos -= 2
             pygame.draw.line(target, self.color, (x_pos, self.rect.y), (x_pos, self.rect.y + self.rect.height), 2)
@@ -68,16 +70,17 @@ class TextBox(Widget):
             # with attribution, with some minor tweaks.
             # COPYPASTA STARTS HERE.
             if e.key == pl.K_BACKSPACE:  # FIXME: Delete at beginning of line?
-                self.text = self.text[:max(self.cursor - 1, 0)] + \
-                            self.text[self.cursor:]
+                self.text = self.text[:max(self.cursor - 1, 0)] + self.text[self.cursor:]
 
                 # Subtract one from cursor_pos, but do not go below zero:
                 self.cursor = max(self.cursor - 1, 0)
+                self.dirty = True
             elif e.key == pl.K_DELETE:
                 self.text = self.text[:self.cursor] + self.text[self.cursor + 1:]
+                self.dirty = True
 
             elif e.key == pl.K_RETURN:
-                return True
+                pass
 
             elif e.key == pl.K_RIGHT:
                 # Add one to cursor_pos, but do not exceed len(input_string)
@@ -96,7 +99,8 @@ class TextBox(Widget):
             else:
                 # If no special key is pressed, add unicode of key to input_string
                 self.text = self.text[:self.cursor] + e.unicode + self.text[self.cursor:]
-            self.cursor += len(e.unicode)  # Some are empty, e.g. K_UP
+                self.dirty = True
+                self.cursor += len(e.unicode)  # Some are empty, e.g. K_UP
             # COPYPASTA ENDS HERE.
 
 
@@ -107,7 +111,7 @@ class Label(Widget):
             self.dirty = True
 
     def __init__(self, x: int, y: int, text: str):
-        super().__init__(x, y)
+        super().__init__(pygame.Rect(x, y, 0, 0))
         self.text = text
         self.dirty = True
         self.text_surface = pygame.Surface((1, 1))
