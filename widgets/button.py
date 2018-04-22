@@ -15,7 +15,7 @@ class ButtonWithText(widgets.common.Button):
         self.text = text
         self.dirty = True
         self.text_surface = pygame.Surface((1, 1))
-        self.font = pygame.font.SysFont('BuiltIn', 32)
+        self.font = pygame.font.SysFont('BuiltIn', self.rect.height)
 
     def redraw_text(self):
         self.text_surface = self.font.render(self.text, True, pygame.Color('white'))

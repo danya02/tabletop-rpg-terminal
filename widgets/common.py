@@ -126,3 +126,12 @@ class Label(Widget):
         if self.dirty:
             self.refresh_text()
         target.blit(self.text_surface, self.rect)
+
+
+class Indicator(Widget):
+    def __init__(self, rect: pygame.Rect):
+        super().__init__(rect)
+        self.color = pygame.Color('black')
+
+    def draw(self, target: pygame.Surface):
+        pygame.draw.circle(target, self.color, self.rect.center, min(self.rect.h, self.rect.w) // 2)
